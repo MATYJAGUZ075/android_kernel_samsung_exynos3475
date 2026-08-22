@@ -21,6 +21,7 @@
 #include <linux/blkdev.h>
 #include <linux/pagemap.h>
 #include <linux/export.h>
+#include <linux/module.h>
 #include <linux/hid.h>
 #include <linux/workqueue.h>
 #include <asm/unaligned.h>
@@ -2095,33 +2096,40 @@ static int __ffs_data_got_strings(struct ffs_data *ffs,
 	}
 
 	/* Allocate everything in one chunk so there's less maintenance. */
-	{
-		struct {
-			struct usb_gadget_strings *stringtabs[lang_count + 1];
-			struct usb_gadget_strings stringtab[lang_count];
-			struct usb_string strings[lang_count*(needed_count+1)];
-		} *d;
-		unsigned i = 0;
+		{
+			struct usb_gadget_strings **d_stringtabs;
+			struct usb_gadget_strings *d_stringtab;
+			struct usb_string *d_strings;
+			unsigned i = 0;
 
-		d = kmalloc(sizeof *d, GFP_KERNEL);
-		if (unlikely(!d)) {
-			kfree(_data);
-			return -ENOMEM;
+			d_stringtabs = kmalloc(
+				(lang_count + 1) * sizeof(*d_stringtabs) +
+				lang_count * sizeof(struct usb_gadget_strings) +
+				lang_count * (needed_count + 1) *
+					sizeof(struct usb_string),
+				GFP_KERNEL);
+			if (unlikely(!d_stringtabs)) {
+				kfree(_data);
+				return -ENOMEM;
+			}
+			d_stringtab = (struct usb_gadget_strings *)
+				(d_stringtabs + lang_count + 1);
+			d_strings = (struct usb_string *)
+				(d_stringtab + lang_count);
+
+			stringtabs = d_stringtabs;
+			t = d_stringtab;
+			i = lang_count;
+			do {
+				*stringtabs++ = t++;
+			} while (--i);
+			*stringtabs = NULL;
+
+			stringtabs = d_stringtabs;
+			t = d_stringtab;
+			s = d_strings;
+			strings = s;
 		}
-
-		stringtabs = d->stringtabs;
-		t = d->stringtab;
-		i = lang_count;
-		do {
-			*stringtabs++ = t++;
-		} while (--i);
-		*stringtabs = NULL;
-
-		stringtabs = d->stringtabs;
-		t = d->stringtab;
-		s = d->strings;
-		strings = s;
-	}
 
 	/* For each language */
 	data += 16;
@@ -2402,19 +2410,20 @@ static int ffs_func_bind(struct usb_configuration *c,
 		func->ffs->ss_descs_count;
 
 	int fs_len, hs_len, ret;
+	size_t eps_sz = ffs->eps_count * sizeof(struct ffs_ep);
+	size_t fs_descs_sz = (full ? ffs->fs_descs_count + 1 : 0) *
+			     sizeof(struct usb_descriptor_header *);
+	size_t hs_descs_sz = (high ? ffs->hs_descs_count + 1 : 0) *
+			     sizeof(struct usb_descriptor_header *);
+	size_t ss_descs_sz = (super ? ffs->ss_descs_count + 1 : 0) *
+			     sizeof(struct usb_descriptor_header *);
+	size_t inums_sz = ffs->interfaces_count * sizeof(short);
+	char *mem;
 
-	/* Make it a single chunk, less management later on */
-	struct {
-		struct ffs_ep eps[ffs->eps_count];
-		struct usb_descriptor_header
-			*fs_descs[full ? ffs->fs_descs_count + 1 : 0];
-		struct usb_descriptor_header
-			*hs_descs[high ? ffs->hs_descs_count + 1 : 0];
-		struct usb_descriptor_header
-			*ss_descs[super ? ffs->ss_descs_count + 1 : 0];
-		short inums[ffs->interfaces_count];
-		char raw_descs[ffs->raw_descs_length];
-	} *data;
+	struct ffs_ep *eps;
+	struct usb_descriptor_header **fs_descs, **hs_descs, **ss_descs;
+	short *inums;
+	char *raw_descs;
 
 	ENTER();
 
@@ -2423,28 +2432,36 @@ static int ffs_func_bind(struct usb_configuration *c,
 		return -ENOTSUPP;
 
 	/* Allocate */
-	data = kmalloc(sizeof *data, GFP_KERNEL);
-	if (unlikely(!data))
+	mem = kmalloc(eps_sz + fs_descs_sz + hs_descs_sz + ss_descs_sz +
+		      inums_sz + ffs->raw_descs_length, GFP_KERNEL);
+	if (unlikely(!mem))
 		return -ENOMEM;
 
+	eps = (struct ffs_ep *)mem;
+	fs_descs = (struct usb_descriptor_header **)(void *)(mem + eps_sz);
+	hs_descs = fs_descs + (fs_descs_sz / sizeof *fs_descs);
+	ss_descs = hs_descs + (hs_descs_sz / sizeof *hs_descs);
+	inums = (short *)((char *)ss_descs + ss_descs_sz);
+	raw_descs = (char *)inums + inums_sz;
+
 	/* Zero */
-	memset(data->eps, 0, sizeof data->eps);
+	memset(eps, 0, eps_sz);
 	/* Copy only raw (hs,fs) descriptors (until ss_magic and ss_count) */
-	memcpy(data->raw_descs, ffs->raw_descs + 16,
+	memcpy(raw_descs, ffs->raw_descs + 16,
 				ffs->raw_fs_hs_descs_length);
 	/* Copy SS descriptors */
 	if (func->ffs->ss_descs_count)
-		memcpy(data->raw_descs + ffs->raw_fs_hs_descs_length,
+		memcpy(raw_descs + ffs->raw_fs_hs_descs_length,
 			ffs->raw_descs + ffs->raw_ss_descs_offset,
 			ffs->raw_ss_descs_length);
 
-	memset(data->inums, 0xff, sizeof data->inums);
+	memset(inums, 0xff, inums_sz);
 	for (ret = ffs->eps_count; ret; --ret)
-		data->eps[ret].num = -1;
+		eps[ret].num = -1;
 
 	/* Save pointers */
-	func->eps             = data->eps;
-	func->interfaces_nums = data->inums;
+	func->eps             = eps;
+	func->interfaces_nums = inums;
 
 	/*
 	 * Go through all the endpoint descriptors and allocate
@@ -2452,10 +2469,10 @@ static int ffs_func_bind(struct usb_configuration *c,
 	 * numbers without worrying that it may be described later on.
 	 */
 	if (likely(full)) {
-		func->function.fs_descriptors = data->fs_descs;
+		func->function.fs_descriptors = fs_descs;
 		fs_len = ffs_do_descs(ffs->fs_descs_count,
-				   data->raw_descs,
-				   sizeof(data->raw_descs),
+				   raw_descs,
+				   ffs->raw_descs_length,
 				   __ffs_func_bind_do_descs, func);
 		if (unlikely(fs_len < 0)) {
 			ret = fs_len;
@@ -2466,10 +2483,10 @@ static int ffs_func_bind(struct usb_configuration *c,
 	}
 
 	if (likely(high)) {
-		func->function.hs_descriptors = data->hs_descs;
+		func->function.hs_descriptors = hs_descs;
 		hs_len = ffs_do_descs(ffs->hs_descs_count,
-				   data->raw_descs + fs_len,
-				   (sizeof(data->raw_descs)) - fs_len,
+				   raw_descs + fs_len,
+				   (ffs->raw_descs_length) - fs_len,
 				   __ffs_func_bind_do_descs, func);
 		if (unlikely(hs_len < 0)) {
 			ret = hs_len;
@@ -2480,10 +2497,10 @@ static int ffs_func_bind(struct usb_configuration *c,
 	}
 
 	if (likely(super)) {
-		func->function.ss_descriptors = data->ss_descs;
+		func->function.ss_descriptors = ss_descs;
 		ret = ffs_do_descs(ffs->ss_descs_count,
-				   data->raw_descs + fs_len + hs_len,
-				   (sizeof(data->raw_descs)) - fs_len - hs_len,
+				   raw_descs + fs_len + hs_len,
+				   (ffs->raw_descs_length) - fs_len - hs_len,
 				   __ffs_func_bind_do_descs, func);
 		if (unlikely(ret < 0))
 			goto error;
@@ -2497,7 +2514,7 @@ static int ffs_func_bind(struct usb_configuration *c,
 	ret = ffs_do_descs(ffs->fs_descs_count +
 			   (high ? ffs->hs_descs_count : 0) +
 			   (super ? ffs->ss_descs_count : 0),
-			   data->raw_descs, sizeof(data->raw_descs),
+			   raw_descs, ffs->raw_descs_length,
 			   __ffs_func_bind_do_nums, func);
 	if (unlikely(ret < 0))
 		goto error;

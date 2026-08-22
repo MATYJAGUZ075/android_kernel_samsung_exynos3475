@@ -383,6 +383,18 @@ KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__
 KBUILD_AFLAGS_MODULE  := -DMODULE
 KBUILD_CFLAGS_MODULE  := -DMODULE
+
+# LLVM/Clang: pasar el triplet ARM al driver y usar GNU as del toolchain
+# cruzado. Backport minimo de soporte clang para kbuild 3.10.
+ifneq ($(findstring clang,$(CC)),)
+CLANG_TRIPLET	?= $(if $(CROSS_COMPILE),$(patsubst %-,%,$(CROSS_COMPILE)),arm-linux-gnueabi)
+CLANG_FLAGS	:= --target=$(CLANG_TRIPLET) -fno-integrated-as
+# Clang convierte memcmp en bcmp cuando el resultado solo se compara con 0,
+# y strcpy en stpcpy cuando el valor de retorno no se usa; el kernel 3.10 no
+# implementa ninguna de las dos. Evitar ambas transformaciones.
+KBUILD_CFLAGS	+= $(CLANG_FLAGS) -fno-builtin-memcmp -fno-builtin-stpcpy
+KBUILD_AFLAGS	+= $(CLANG_FLAGS)
+endif
 KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds
 
 # Read KERNELRELEASE from include/config/kernel.release (if it exists)
