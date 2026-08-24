@@ -387,7 +387,11 @@ KBUILD_CFLAGS_MODULE  := -DMODULE
 # LLVM/Clang: pasar el triplet ARM al driver y usar GNU as del toolchain
 # cruzado. Backport minimo de soporte clang para kbuild 3.10.
 ifneq ($(findstring clang,$(CC)),)
-CLANG_TRIPLET	?= $(if $(CROSS_COMPILE),$(patsubst %-,%,$(CROSS_COMPILE)),arm-linux-gnueabi)
+# FIX-029: el prefijo CROSS_COMPILE apunta a arm-linux-androidkernel-*,
+# pero el toolchain real del arbol es arm-linux-androideabi-*. Mapear el
+# nombre para que clang encuentre su GCC/as en esa ruta (con
+# -fno-integrated-as) y reciba un triple valido.
+CLANG_TRIPLET	?= $(subst arm-linux-androidkernel,arm-linux-androideabi,$(patsubst %-,%,$(CROSS_COMPILE)))
 CLANG_FLAGS	:= --target=$(CLANG_TRIPLET) -fno-integrated-as
 # Clang convierte memcmp en bcmp cuando el resultado solo se compara con 0,
 # y strcpy en stpcpy cuando el valor de retorno no se usa; el kernel 3.10 no
