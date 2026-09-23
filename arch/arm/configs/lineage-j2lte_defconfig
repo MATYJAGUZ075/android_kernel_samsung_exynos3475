@@ -528,7 +528,7 @@ CONFIG_SECCOMP=y
 CONFIG_USE_OF=y
 # CONFIG_ATAGS is not set
 CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE=y
-CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE_NAMES="exynos3475-j2lte_swa_open_04 exynos3475-j2lte_swa_open_03 exynos3475-j2lte_swa_open_02 exynos3475-j2lte_swa_open_01 exynos3475-j2lte_swa_open_00"
+CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE_NAMES="exynos3475-j2lte_swa_open_00 exynos3475-j2lte_swa_open_01 exynos3475-j2lte_swa_open_02 exynos3475-j2lte_swa_open_03 exynos3475-j2lte_swa_open_04"
 CONFIG_ZBOOT_ROM_TEXT=0x0
 CONFIG_ZBOOT_ROM_BSS=0x0
 CONFIG_ARM_APPENDED_DTB=y
@@ -2488,7 +2488,7 @@ CONFIG_BACKLIGHT_GENERIC=y
 # Console display driver support
 #
 CONFIG_DUMMY_CONSOLE=y
-# CONFIG_FRAMEBUFFER_CONSOLE is not set
+CONFIG_FRAMEBUFFER_CONSOLE=y
 # CONFIG_LOGO is not set
 # CONFIG_FB_SSD1307 is not set
 CONFIG_SOUND=y
