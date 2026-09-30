@@ -761,6 +761,146 @@ static long ffs_ep0_ioctl(struct file *file, unsigned code, unsigned long value)
 	return ret;
 }
 
+/*
+ * AIO support for functionfs (functionfs-aio-v3)
+ *
+ * Android 13 adbd usa io_submit()/IOCB_CMD_PREAD de forma incondicional. Sin
+ * .aio_read/.aio_write en ffs_ep0_operations, aio_read() devuelve -EINVAL
+ * (ver fs/aio.c: "iocb->ki_filp->f_op->aio_read == NULL") y adbd destruye su
+ * propio transport, dejando ADB USB offline.
+ *
+ * Limitaciones conocidas y asumidas de esta version:
+ *  - Solo nr_segs == 1 (suficiente para las llamadas de adbd, que envian un
+ *    iovec por peticion). Con mas de un iovec devuelve -EINVAL.
+ *  - Reutiliza las funciones de I/O sincrono Existing mediante system_wq, por
+ *    lo que hereda la serializacion de ffs_mutex.
+ *  - Sin soporte de cancelacion.
+ *  - La referencia al struct file no se toma aqui: en 3.10 __io_submit() hace
+ *    fget() y put_req() hace fput() despues de aio_complete().
+ *
+ * Prototipos ESTATICOS de las funciones de I/O sincrono que se reutilizan.
+ * Son obligatorios: C no permite llamar a una funcion static sin prototipo
+ * previo (si se omite, el compilador la trata como no-static/int implicito y
+ * la definicion posterior produce "static declaration follows non-static").
+ */
+static ssize_t ffs_ep0_write(struct file *file, const char __user *buf,
+			     size_t len, loff_t *ptr);
+static ssize_t ffs_ep0_read(struct file *file, char __user *buf,
+			    size_t len, loff_t *ptr);
+static ssize_t ffs_epfile_write(struct file *file, const char __user *buf,
+			 size_t len, loff_t *ptr);
+static ssize_t ffs_epfile_read(struct file *file, char __user *buf,
+			       size_t len, loff_t *ptr);
+
+/* Contexto de un trabajo AIO diferido a system_wq. */
+struct ffs_aio_work {
+	struct work_struct work;
+	struct kiocb *iocb;
+	const struct iovec *iov;
+	unsigned long nr_segs;
+	loff_t pos;
+	int read;
+	struct file *file;
+};
+
+/*
+ * Ejecuta la peticion en contexto de workqueue y entrega el resultado.
+ * Devuelve -EIOCBQUEUED desde aio_read/aio_write, que es lo que le indica al
+ * core de AIO que la peticion quedo encolada.
+ */
+static void ffs_epfile_aio_work(struct work_struct *work)
+{
+	struct ffs_aio_work *w = container_of(work, struct ffs_aio_work, work);
+	ssize_t ret;
+
+	if (w->nr_segs != 1) {
+		ret = -EINVAL;
+	} else if (w->read) {
+		ret = ffs_epfile_read(w->file,
+				     (char __user *)w->iov[0].iov_base,
+				     w->iov[0].iov_len, &w->pos);
+	} else {
+		ret = ffs_epfile_write(w->file,
+				       (const char __user *)w->iov[0].iov_base,
+				       w->iov[0].iov_len, &w->pos);
+	}
+
+	aio_complete(w->iocb, ret, ret);
+	kfree(w);
+}
+
+static void ffs_ep0_aio_work(struct work_struct *work)
+{
+	struct ffs_aio_work *w = container_of(work, struct ffs_aio_work, work);
+	ssize_t ret;
+
+	if (w->nr_segs != 1) {
+		ret = -EINVAL;
+	} else if (w->read) {
+		ret = ffs_ep0_read(w->file,
+				   (char __user *)w->iov[0].iov_base,
+				   w->iov[0].iov_len, &w->pos);
+	} else {
+		ret = ffs_ep0_write(w->file,
+				    (const char __user *)w->iov[0].iov_base,
+				    w->iov[0].iov_len, &w->pos);
+	}
+
+	aio_complete(w->iocb, ret, ret);
+	kfree(w);
+}
+
+/* Encola una peticion AIO. is_ep0 selecciona el par de funciones de EP0. */
+static ssize_t ffs_aio_submit(struct kiocb *iocb, const struct iovec *iov,
+			      unsigned long nr_segs, loff_t pos, int read,
+			      int is_ep0)
+{
+	struct ffs_aio_work *w;
+
+	if (nr_segs != 1)
+		return -EINVAL;
+
+	w = kzalloc(sizeof(*w), GFP_KERNEL);
+	if (!w)
+		return -ENOMEM;
+
+	w->iocb = iocb;
+	w->iov = iov;
+	w->nr_segs = nr_segs;
+	w->pos = pos;
+	w->read = read;
+	w->file = iocb->ki_filp;
+
+	INIT_WORK(&w->work, is_ep0 ? ffs_ep0_aio_work : ffs_epfile_aio_work);
+	schedule_work(&w->work);
+
+	return -EIOCBQUEUED;
+}
+
+static ssize_t ffs_ep0_aio_read(struct kiocb *iocb, const struct iovec *iov,
+				unsigned long nr_segs, loff_t pos)
+{
+	return ffs_aio_submit(iocb, iov, nr_segs, pos, 1, 1);
+}
+
+static ssize_t ffs_ep0_aio_write(struct kiocb *iocb, const struct iovec *iov,
+				 unsigned long nr_segs, loff_t pos)
+{
+	return ffs_aio_submit(iocb, iov, nr_segs, pos, 0, 1);
+}
+
+static ssize_t ffs_epfile_aio_read(struct kiocb *iocb, const struct iovec *iov,
+				   unsigned long nr_segs, loff_t pos)
+{
+	return ffs_aio_submit(iocb, iov, nr_segs, pos, 1, 0);
+}
+
+static ssize_t ffs_epfile_aio_write(struct kiocb *iocb, const struct iovec *iov,
+				    unsigned long nr_segs, loff_t pos)
+{
+	return ffs_aio_submit(iocb, iov, nr_segs, pos, 0, 0);
+}
+
 static const struct file_operations ffs_ep0_operations = {
 	.llseek =	no_llseek,
 
@@ -769,6 +909,8 @@ static const struct file_operations ffs_ep0_operations = {
 	.read =		ffs_ep0_read,
 	.release =	ffs_ep0_release,
 	.unlocked_ioctl =	ffs_ep0_ioctl,
+	.aio_read =	ffs_ep0_aio_read,
+	.aio_write =	ffs_ep0_aio_write,
 };
 
 
@@ -1041,6 +1183,8 @@ static const struct file_operations ffs_epfile_operations = {
 	.read =		ffs_epfile_read,
 	.release =	ffs_epfile_release,
 	.unlocked_ioctl =	ffs_epfile_ioctl,
+	.aio_read =	ffs_epfile_aio_read,
+	.aio_write =	ffs_epfile_aio_write,
 };
 
 
