@@ -26,6 +26,17 @@
 #include <linux/workqueue.h>
 #include <asm/unaligned.h>
 
+/* AIO (adbd A13 usa io_submit con IOCB_CMD_PREAD/PWRITE).
+ * <linux/uio.h> trae la definicion completa de struct iovec: en este kernel
+ * include/linux/fs.h solo hace forward declaration, asi que sin este include
+ * w->iov[0].iov_base falla con "subscript of pointer to incomplete type".
+ * <linux/aio.h> trae struct kiocb completo (vive ahi, no en fs.h) y
+ * aio_complete(). Ninguno de los dos arrastra <linux/file.h>, asi que no
+ * reintroducen el conflicto de prototipo de fput.
+ */
+#include <linux/uio.h>
+#include <linux/aio.h>
+
 #include <linux/usb/composite.h>
 #include <linux/usb/functionfs.h>
 
