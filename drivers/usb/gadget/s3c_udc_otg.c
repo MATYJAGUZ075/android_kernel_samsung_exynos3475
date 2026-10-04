@@ -367,54 +367,55 @@ static inline bool is_nonswitch(void)
 static void udc_disable(struct s3c_udc *dev)
 {
 	u32 utemp;
-	DEBUG_SETUP("%s: %p\n", __func__, dev);
 
-	disable_irq(dev->irq);
+	/*
+	 * FIX-023: esta funcion deja de apagar hardware.
+	 *
+	 * HISTORIA (medido en el J2, LineageOS 20):
+	 *  - El kernel original imprimia "usb: Skip udc_enable": udc_enable()
+	 *    nunca corria, el USB nunca enumeraba y udc_disable() no podia colgar
+	 *    nada porque nunca habia hardware encendido.
+	 *  - Al arreglar la enumeracion (FIX-020) udc_enable() empezo a correr y
+	 *    aparecio un cuelga duro al DESENCHUFAR el cable: pantalla congelada,
+	 *    boton de power sin efecto, reset forzado.
+	 *  - d4e2e459c quito exynos_udc_clk_disable_unprepare() porque
+	 *    upsizer_xiu / xiu_d_fsys1 / upsizer_fsys1 no son clocks privados del
+	 *    USB sino puertas del interconect del SoC. RESULTADO: el cuelga sigue.
+	 *    Esa hipotesis queda DESCARTADA.
+	 *  - Medido ahora: request_irq() se pide con flags=0 (exclusivo), asi que
+	 *    disable_irq() no le roba el IRQ a otro driver. Y dev->otg =
+	 *    dev->phy->otg, o sea que udc_disable() llama set_host(NULL) sobre el
+	 *    DRIC/PHY COMPARTIDO y despues lo apaga otra vez con
+	 *    usb_phy_shutdown(): doble apagado del mismo PHY compartido.
+	 *
+	 * DECISION: no seguir adivinando. El UDC queda armado permanentemente y
+	 * udc_disable() solo hace la desconexion logica. El estado visible para el
+	 * driver ya lo deja quiescido stop_activity(), que se llama justo antes en
+	 * s3c_vbus_enable().
+	 *
+	 * Si el cuelga desaparece, el culpable estaba en este bloque. Si sigue,
+	 * queda descartado todo udc_disable() y el problema esta en stop_activity(),
+	 * en s3c_udc_stop() o en el camino del driver g_ffs.
+	 */
+	printk(KERN_INFO "FIX023 udc_disable: solo SOFT_DISCONNECT, no apago hardware\n");
+
 	udc_set_address(dev, 0);
-
 	dev->ep0state = WAIT_FOR_SETUP;
 	dev->gadget.speed = USB_SPEED_UNKNOWN;
 	dev->usb_address = 0;
 
-	/* Mask the core interrupt */
-	__raw_writel(0, dev->regs + S3C_UDC_OTG_GINTMSK);
-
-	/* Put the OTG device core in the disconnected state.*/
 	utemp = __raw_readl(dev->regs + S3C_UDC_OTG_DCTL);
 	utemp |= SOFT_DISCONNECT;
 	__raw_writel(utemp, dev->regs + S3C_UDC_OTG_DCTL);
 	udelay(20);
 
-	if (dev->otg)
-		dev->otg->set_host(dev->otg, NULL);
-
-	printk(KERN_INFO "FIX022 udc_disable: PHY off, clocks INTACTOS\n");
-	usb_phy_shutdown(dev->phy);
-
 	/*
-	 * FIX-022: NO apagar los clocks del UDC.
-	 *
-	 * En el Exynos 3475 estos clocks no son privados del USB:
-	 *   exynos_udc_clk_get() -> exynos3475_otg_clk_names[] =
-	 *     "otg_aclk", "otg_hclk", "upsizer_otg", "xiu_d_fsys1",
-	 *     "upsizer_fsys1", "upsizer_ahb_usbhs", "ahb_usbhs",
-	 *     "ahb2axi_usbhs"
-	 *
-	 * "upsizer_xiu" es el interconect (XIU) de Samsung y "xiu_d_fsys1" /
-	 * "upsizer_fsys1" son puertas del fabric hacia FSYS1. Apagarlas cuando se
-	 * desconecta el VBUS baja el interconect del SoC, no solo el USB: el
-	 * siguiente acceso a FSYS1 o al AHB de USB se queda colgado y el
-	 * sistema se cuelga (pantalla congelada, sin responder al boton de power,
-	 * hay que forzar el reset).
-	 *
-	 * Esto nunca se manifesto antes porque udc_enable() no corria nunca: el
-	 * driver imprimia "usb: Skip udc_enable", asi que los clocks nunca se
-	 * habilitaban y este clk_disable_unprepare no tenia efecto. Al arreglar
-	 * la enumeracion (FIX-020) se activo este codigo muerto y trajo el bug
-	 * consigo.
-	 *
-	 * Trade-off: el clock queda prendido mientras el USB este inactivo. Es
-	 * un coste de energia pequeno a cambio de no tumbar el interconect.
+	 * Deliberadamente NO:
+	 *   disable_irq(dev->irq)             el UDC debe seguir viendo VBUS
+	 *   __raw_writel(0, GINTMSK)          no enmascarar las IRQ del core
+	 *   dev->otg->set_host(dev->otg, NULL) no tocar el DRIC compartido
+	 *   usb_phy_shutdown(dev->phy)         no apagar el PHY
+	 *   exynos_udc_clk_disable_unprepare() no tocar los clocks
 	 */
 
 #if defined(CONFIG_FAKE_BATTERY_SAMSUNG)
