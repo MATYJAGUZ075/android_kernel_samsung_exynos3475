@@ -327,14 +327,38 @@ err:
  * is_nonswitch - whether or not switch driver.
  *
  * Return true if switch driver isn't.
+ *
+ * FIX-020: esto devuelve true SIEMPRE, ignorando CONFIG_USB_GADGET_SWITCH y
+ * CONFIG_USB_EXYNOS_SWITCH.
+ *
+ * Motivo, medido en el J2 (LineageOS 20): con el switch activo,
+ * s3c_udc_start() imprimia "usb: Skip udc_enable" y delegaba la habilitacion
+ * del UDC a exynos-usb-switch, que decide el modo con is_host_detect() /
+ * is_device_detect(). En este device no llega a detectar modo device, asi que
+ * udc_enable() no se llamaba nunca: el gadget quedaba bound ("bound driver
+ * 'g_ffs'") pero el controlador nunca se activaba y el host no veía ningun
+ * dispositivo USB. Por eso adb no aparecia nunca en `adb devices`.
+ *
+ * El log del telefono lo muestra claro:
+ *   g_ffs gadget: g_ffs ready
+ *   bound driver 'g_ffs'
+ *   usb: Skip udc_enable
+ *   adbd: functionfs successfully initialized
+ *   adbd: registering usb transport
+ *
+ * adbd funcionaba bien; lo que nunca ocurria era udc_enable().
+ *
+ * NO se puede resolver desactivando CONFIG_USB_EXYNOS_SWITCH, porque
+ * drivers/usb/notify/usb_notifier.c (CONFIG_USB_NOTIFY_LAYER=y) llama a
+ * exynos_otg_vbus_event() y exynos_id_event(), que solo estan definidas en
+ * exynos-usb-switch.o. Desactivarlo deja vmlinux con referencias sin resolver.
+ * Por eso el simbolo se mantiene activo y lo que cambia es esta funcion: el
+ * driver del switch sigue compilado y exportando, pero ya no decide si el UDC
+ * se habilita.
  */
 static inline bool is_nonswitch(void)
 {
-#if defined(CONFIG_USB_GADGET_SWITCH) || defined(CONFIG_USB_EXYNOS_SWITCH)
-	return false;
-#else
 	return true;
-#endif
 }
 
 /*
