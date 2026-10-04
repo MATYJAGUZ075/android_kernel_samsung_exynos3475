@@ -2862,12 +2862,16 @@ CONFIG_USB_SERIAL_FTDI_SIO=y
 # CONFIG_USB_YUREX is not set
 # CONFIG_USB_EZUSB_FX2 is not set
 # CONFIG_USB_HSIC_USB3503 is not set
-# FIX-020: CONFIG_USB_EXYNOS_SWITCH se mantiene =y a proposito.
-# No se puede desactivar: drivers/usb/notify/usb_notifier.c (CONFIG_USB_NOTIFY_LAYER)
-# llama a exynos_otg_vbus_event() y exynos_id_event(), que solo existen en
-# exynos-usb-switch.o. Desactivarlo rompe el link de vmlinux.
-# El fix va en s3c_udc_otg.c: is_nonswitch() devuelve true siempre.
-CONFIG_USB_EXYNOS_SWITCH=y
+# FIX-020 (corregido): desactivar de verdad el switch, y NO forzar
+# is_nonswitch() en el codigo. Con el switch =y el driver
+# exynos-usb-switch compila y maneja el VBUS desde un workqueue con
+# mutex (llama usb_gadget_vbus_disconnect y pm_runtime_allow/forbid
+# sobre ehci/ohci). Si ademas el UDC se saltea el switch por
+# is_nonswitch() forzado a true, DOS drivers manejan el mismo PHY y el
+# sistema se cuelga al desconectar el cable: pantalla congelada, boton de
+# power sin efecto, reset forzado. Medido en el J2 (LineageOS 20).
+# Con el switch apagado el UDC es el unico que maneja el PHY.
+# CONFIG_USB_EXYNOS_SWITCH is not set
 CONFIG_USB_PHY=y
 # CONFIG_USB_OTG_WAKELOCK is not set
 # CONFIG_NOP_USB_XCEIV is not set
