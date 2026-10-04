@@ -388,6 +388,7 @@ static void udc_disable(struct s3c_udc *dev)
 	if (dev->otg)
 		dev->otg->set_host(dev->otg, NULL);
 
+	printk(KERN_INFO "FIX021 udc_disable: shutdown PHY + clk off\n");
 	usb_phy_shutdown(dev->phy);
 
 	exynos_udc_clk_disable_unprepare(dev);
@@ -439,6 +440,7 @@ static int udc_enable(struct s3c_udc *dev)
 
 	DEBUG_SETUP("%s: %p\n", __func__, dev);
 
+	printk(KERN_INFO "FIX021 udc_enable: enter irq=%d\n", dev->irq);
 	enable_irq(dev->irq);
 
 	err = exynos_udc_clk_prepare_enable(dev);
@@ -506,8 +508,8 @@ int s3c_vbus_enable(struct usb_gadget *gadget, int is_active)
 				s3c_udc_soft_connect();
 		}
 	} else {
-		printk(KERN_INFO "usb: %s, udc_enabled : %d, is_active : %d\n",
-				__func__, dev->udc_enabled, is_active);
+		printk(KERN_INFO "FIX021 vbus_session NO-OP: udc_enabled=%d is_active=%d pullup=%d\n",
+				dev->udc_enabled, is_active, pullup_state);
 	}
 
 	return 0;
@@ -605,20 +607,21 @@ static int s3c_udc_stop(struct usb_gadget *gadget,
 	spin_lock_irqsave(&dev->lock, flags);
 	dev->driver = NULL;
 	stop_activity(dev, driver);
-	/*
-	 * FIX-020 (correccion): el UDC queda realmente deshabilitado al
-	 * desbindar. Sin esto, udc_enabled se queda en 1 y en el siguiente
-	 * bind s3c_vbus_enable() ve "udc_enabled == is_active" y no hace
-	 * nada, y el guard "if (!dev->udc_enabled)" de s3c_udc_start()
-	 * saltea udc_enable(). Resultado: tras cualquier reinicio de adbd
-	 * (adb root, o un crash) el gadget queda bound pero el controlador
-	 * nunca se re-habilita y el host deja de ver el telefono.
-	 */
-	dev->udc_enabled = 0;
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	printk(KERN_INFO "Unregistered gadget driver '%s'\n",
-			driver->driver.name);
+	/*
+	 * FIX-021: se REVIERTE el "dev->udc_enabled = 0" que se habia puesto
+	 * aqui (commit a8a43349). No era el fix y probablemente era la causa
+	 * de que el rebind siguiera fallando: VBUS no cambia fisicamente
+	 * cuando adbd reinicia, asi que s3c_vbus_enable() (.vbus_session) NO
+	 * se vuelve a llamar. Con udc_enabled forzado a 0, el siguiente
+	 * s3c_udc_start() entra al guard y llama udc_enable() con el clock ya
+	 * prendido y el IRQ ya habilitado (enable_irq desbalanceado), en vez
+	 * de apoyarse en el core que ya estaba armado desde el boot.
+	 */
+	printk(KERN_INFO "FIX021 s3c_udc_stop: unbind '%s' udc_enabled=%d pullup=%d DCTL=%08x\n",
+			driver->driver.name, dev->udc_enabled, pullup_state,
+			__raw_readl(dev->regs + S3C_UDC_OTG_DCTL));
 
 	return 0;
 }
@@ -1208,12 +1211,22 @@ static void s3c_udc_soft_disconnect(void)
 
 static int s3c_udc_pullup(struct usb_gadget *gadget, int is_on)
 {
+	struct s3c_udc *dev = the_controller;
+
+	printk(KERN_INFO "FIX021 pullup(%d): udc_enabled=%d pullup=%d DCTL=%08x speed=%d\n",
+			is_on, dev->udc_enabled, pullup_state,
+			__raw_readl(dev->regs + S3C_UDC_OTG_DCTL),
+			(int)dev->gadget.speed);
+
 	if (is_on)
 		s3c_udc_soft_connect();
 	else
 		s3c_udc_soft_disconnect();
 
 	pullup_state = is_on;
+
+	printk(KERN_INFO "FIX021 pullup(%d): DCTL post=%08x\n",
+			is_on, __raw_readl(dev->regs + S3C_UDC_OTG_DCTL));
 	return 0;
 }
 
