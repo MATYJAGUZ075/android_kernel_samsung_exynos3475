@@ -539,8 +539,49 @@ static int s3c_udc_start(struct usb_gadget *gadget,
 	printk(KERN_INFO "bound driver '%s'\n",
 			driver->driver.name);
 	if (is_nonswitch()) {
-		udc_enable(dev);
-		dev->udc_enabled = 1;
+		/*
+		 * FIX-020: hacer soft connect explicito.
+		 *
+		 * udc_enable() termina en reconfig_usbd(), que deja el core
+		 * del controlador en soft-disconnect a proposito:
+		 *     utemp |= SOFT_DISCONNECT;   /  S3C_UDC_OTG_DCTL
+		 *
+		 * Sacar ese bit es un paso aparte (s3c_udc_soft_connect()), y
+		 * solo lo hacian estos tres:
+		 *   - s3c_udc_pullup(1), que el core de gadget llama via
+		 *     usb_gadget_connect(). En este kernel solo lo invoca
+		 *     usb_function_activate() (composite.c), ruta ConfigFS que
+		 *     no se usa con el composite android de Samsung.
+		 *   - s3c_vbus_enable(is_active=1), pero SOLO "if (pullup_state)"
+		 *     y pullup_state es un static int en BSS, vale 0.
+		 *   - s3c_udc_resume(), que no se llama en este arranque.
+		 *
+		 * O sea que con FIX-020 anterior (que solo llamaba a
+		 * udc_enable()) el controlador quedaba bound, con clock, IRQ y
+		 * PHY listos, y VBUS encendido, pero soft-desconectado: nunca
+		 * se adjunta al bus y el host no ve ningun dispositivo USB.
+		 * Eso es exactamente lo que pasaba en el J2 con adb.
+		 *
+		 * El guard "if (!dev->udc_enabled)" importa: en este boot
+		 * s3c_vbus_enable(1) corre ANTES que el bind y ya deja
+		 * udc_enabled = 1. Sin el guard volveriamos a llamar a
+		 * udc_enable() y a enable_irq(), con lo que aparece
+		 * "Unbalanced enable for IRQ 270".
+		 */
+		int err;
+
+		if (!dev->udc_enabled) {
+			udc_reinit(dev);
+			err = udc_enable(dev);
+			if (err) {
+				pr_err("usb: s3c_udc_start: udc_enable failed (%d)\n",
+					err);
+				return err;
+			}
+			dev->udc_enabled = 1;
+		}
+		pullup_state = 1;
+		s3c_udc_soft_connect();
 	} else {
 		printk(KERN_INFO "usb: Skip udc_enable\n");
 	}
