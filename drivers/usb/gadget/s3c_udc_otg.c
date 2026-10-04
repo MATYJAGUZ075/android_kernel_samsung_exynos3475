@@ -327,14 +327,38 @@ err:
  * is_nonswitch - whether or not switch driver.
  *
  * Return true if switch driver isn't.
+ *
+ * FIX-020: esto devuelve true SIEMPRE, ignorando CONFIG_USB_GADGET_SWITCH y
+ * CONFIG_USB_EXYNOS_SWITCH.
+ *
+ * Motivo, medido en el J2 (LineageOS 20): con el switch activo,
+ * s3c_udc_start() imprimia "usb: Skip udc_enable" y delegaba la habilitacion
+ * del UDC a exynos-usb-switch, que decide el modo con is_host_detect() /
+ * is_device_detect(). En este device no llega a detectar modo device, asi que
+ * udc_enable() no se llamaba nunca: el gadget quedaba bound ("bound driver
+ * 'g_ffs'") pero el controlador nunca se activaba y el host no veía ningun
+ * dispositivo USB. Por eso adb no aparecia nunca en `adb devices`.
+ *
+ * El log del telefono lo muestra claro:
+ *   g_ffs gadget: g_ffs ready
+ *   bound driver 'g_ffs'
+ *   usb: Skip udc_enable
+ *   adbd: functionfs successfully initialized
+ *   adbd: registering usb transport
+ *
+ * adbd funcionaba bien; lo que nunca ocurria era udc_enable().
+ *
+ * NO se puede resolver desactivando CONFIG_USB_EXYNOS_SWITCH, porque
+ * drivers/usb/notify/usb_notifier.c (CONFIG_USB_NOTIFY_LAYER=y) llama a
+ * exynos_otg_vbus_event() y exynos_id_event(), que solo estan definidas en
+ * exynos-usb-switch.o. Desactivarlo deja vmlinux con referencias sin resolver.
+ * Por eso el simbolo se mantiene activo y lo que cambia es esta funcion: el
+ * driver del switch sigue compilado y exportando, pero ya no decide si el UDC
+ * se habilita.
  */
 static inline bool is_nonswitch(void)
 {
-#if defined(CONFIG_USB_GADGET_SWITCH) || defined(CONFIG_USB_EXYNOS_SWITCH)
-	return false;
-#else
 	return true;
-#endif
 }
 
 /*
@@ -364,6 +388,7 @@ static void udc_disable(struct s3c_udc *dev)
 	if (dev->otg)
 		dev->otg->set_host(dev->otg, NULL);
 
+	printk(KERN_INFO "FIX021 udc_disable: shutdown PHY + clk off\n");
 	usb_phy_shutdown(dev->phy);
 
 	exynos_udc_clk_disable_unprepare(dev);
@@ -415,6 +440,7 @@ static int udc_enable(struct s3c_udc *dev)
 
 	DEBUG_SETUP("%s: %p\n", __func__, dev);
 
+	printk(KERN_INFO "FIX021 udc_enable: enter irq=%d\n", dev->irq);
 	enable_irq(dev->irq);
 
 	err = exynos_udc_clk_prepare_enable(dev);
@@ -482,8 +508,8 @@ int s3c_vbus_enable(struct usb_gadget *gadget, int is_active)
 				s3c_udc_soft_connect();
 		}
 	} else {
-		printk(KERN_INFO "usb: %s, udc_enabled : %d, is_active : %d\n",
-				__func__, dev->udc_enabled, is_active);
+		printk(KERN_INFO "FIX021 vbus_session NO-OP: udc_enabled=%d is_active=%d pullup=%d\n",
+				dev->udc_enabled, is_active, pullup_state);
 	}
 
 	return 0;
@@ -515,18 +541,48 @@ static int s3c_udc_start(struct usb_gadget *gadget,
 	printk(KERN_INFO "bound driver '%s'\n",
 			driver->driver.name);
 	if (is_nonswitch()) {
-		udc_enable(dev);
-		dev->udc_enabled = 1;
 		/*
-		 * udc_enable() termina en reconfig_usbd(), que deja el core en
-		 * SOFT_DISCONNECT a proposito. Sacar ese bit es un paso aparte y en
-		 * este kernel solo lo hacian s3c_udc_pullup() (que el core de gadget
-		 * no invoca con el composite de Samsung: no hay entrada de log que
-		 * lo confirme, medido en el J2) y s3c_vbus_enable() con
-		 * pullup_state != 0, que en BSS vale 0. Sin esto el controlador
-		 * queda bound, con clock/PHY/IRQ listos, pero soft-desconectado:
-		 * nunca se adjunta al bus y el host no ve ningun dispositivo.
+		 * FIX-020: hacer soft connect explicito.
+		 *
+		 * udc_enable() termina en reconfig_usbd(), que deja el core
+		 * del controlador en soft-disconnect a proposito:
+		 *     utemp |= SOFT_DISCONNECT;   /  S3C_UDC_OTG_DCTL
+		 *
+		 * Sacar ese bit es un paso aparte (s3c_udc_soft_connect()), y
+		 * solo lo hacian estos tres:
+		 *   - s3c_udc_pullup(1), que el core de gadget llama via
+		 *     usb_gadget_connect(). En este kernel solo lo invoca
+		 *     usb_function_activate() (composite.c), ruta ConfigFS que
+		 *     no se usa con el composite android de Samsung.
+		 *   - s3c_vbus_enable(is_active=1), pero SOLO "if (pullup_state)"
+		 *     y pullup_state es un static int en BSS, vale 0.
+		 *   - s3c_udc_resume(), que no se llama en este arranque.
+		 *
+		 * O sea que con FIX-020 anterior (que solo llamaba a
+		 * udc_enable()) el controlador quedaba bound, con clock, IRQ y
+		 * PHY listos, y VBUS encendido, pero soft-desconectado: nunca
+		 * se adjunta al bus y el host no ve ningun dispositivo USB.
+		 * Eso es exactamente lo que pasaba en el J2 con adb.
+		 *
+		 * El guard "if (!dev->udc_enabled)" importa: en este boot
+		 * s3c_vbus_enable(1) corre ANTES que el bind y ya deja
+		 * udc_enabled = 1. Sin el guard volveriamos a llamar a
+		 * udc_enable() y a enable_irq(), con lo que aparece
+		 * "Unbalanced enable for IRQ 270".
 		 */
+		int err;
+
+		if (!dev->udc_enabled) {
+			udc_reinit(dev);
+			err = udc_enable(dev);
+			if (err) {
+				pr_err("usb: s3c_udc_start: udc_enable failed (%d)\n",
+					err);
+				return err;
+			}
+			dev->udc_enabled = 1;
+		}
+		pullup_state = 1;
 		s3c_udc_soft_connect();
 	} else {
 		printk(KERN_INFO "usb: Skip udc_enable\n");
@@ -553,8 +609,19 @@ static int s3c_udc_stop(struct usb_gadget *gadget,
 	stop_activity(dev, driver);
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	printk(KERN_INFO "Unregistered gadget driver '%s'\n",
-			driver->driver.name);
+	/*
+	 * FIX-021: se REVIERTE el "dev->udc_enabled = 0" que se habia puesto
+	 * aqui (commit a8a43349). No era el fix y probablemente era la causa
+	 * de que el rebind siguiera fallando: VBUS no cambia fisicamente
+	 * cuando adbd reinicia, asi que s3c_vbus_enable() (.vbus_session) NO
+	 * se vuelve a llamar. Con udc_enabled forzado a 0, el siguiente
+	 * s3c_udc_start() entra al guard y llama udc_enable() con el clock ya
+	 * prendido y el IRQ ya habilitado (enable_irq desbalanceado), en vez
+	 * de apoyarse en el core que ya estaba armado desde el boot.
+	 */
+	printk(KERN_INFO "FIX021 s3c_udc_stop: unbind '%s' udc_enabled=%d pullup=%d DCTL=%08x\n",
+			driver->driver.name, dev->udc_enabled, pullup_state,
+			__raw_readl(dev->regs + S3C_UDC_OTG_DCTL));
 
 	return 0;
 }
@@ -1144,12 +1211,22 @@ static void s3c_udc_soft_disconnect(void)
 
 static int s3c_udc_pullup(struct usb_gadget *gadget, int is_on)
 {
+	struct s3c_udc *dev = the_controller;
+
+	printk(KERN_INFO "FIX021 pullup(%d): udc_enabled=%d pullup=%d DCTL=%08x speed=%d\n",
+			is_on, dev->udc_enabled, pullup_state,
+			__raw_readl(dev->regs + S3C_UDC_OTG_DCTL),
+			(int)dev->gadget.speed);
+
 	if (is_on)
 		s3c_udc_soft_connect();
 	else
 		s3c_udc_soft_disconnect();
 
 	pullup_state = is_on;
+
+	printk(KERN_INFO "FIX021 pullup(%d): DCTL post=%08x\n",
+			is_on, __raw_readl(dev->regs + S3C_UDC_OTG_DCTL));
 	return 0;
 }
 

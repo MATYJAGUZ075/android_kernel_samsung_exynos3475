@@ -117,21 +117,7 @@ static void check_usb_vbus_state(int state)
 			pr_info("%s: get the %s platform_device\n",
 				__func__, pdev->name);
 #ifdef CONFIG_USB_S3C_OTGD
-#ifdef CONFIG_USB_EXYNOS_SWITCH
 			exynos_otg_vbus_event(pdev, state);
-#else
-			/*
-			 * FIX-023: el switch exynos-usb-switch no se compila
-			 * (CONFIG_USB_EXYNOS_SWITCH is not set), asi que
-			 * exynos_otg_vbus_event() no existe. Estas dos
-			 * funciones solo reenvian el evento al switch; sin
-			 * switch no hay nada que reenviar. Este notifier se
-			 * mantiene =y a proposito: se registra con
-			 * late_initcall(usb_notifier_init) y apagarlo rompia
-			 * el arranque (run 37240569396).
-			 */
-			pr_warn("usb_notifier: switch off, evento vbus ignorado\n");
-#endif
 #else
 			dwc3_exynos_vbus_event(&pdev->dev, state);
 #endif
@@ -167,12 +153,7 @@ static void check_usb_id_state(int state)
 end:
 	return;
 #else
-#ifdef CONFIG_USB_EXYNOS_SWITCH
 	exynos_id_event(state);
-#else
-	/* FIX-023: ver la nota en check_usb_vbus_state(). */
-	pr_warn("usb_notifier: switch off, evento id ignorado\n");
-#endif
 #endif
 }
 
