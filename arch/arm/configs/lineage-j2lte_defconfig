@@ -2862,7 +2862,13 @@ CONFIG_USB_SERIAL_FTDI_SIO=y
 # CONFIG_USB_YUREX is not set
 # CONFIG_USB_EZUSB_FX2 is not set
 # CONFIG_USB_HSIC_USB3503 is not set
-CONFIG_USB_EXYNOS_SWITCH=y
+# FIX-020: desactivar EXYNOS USB switch (ver commit).
+# Con CONFIG_USB_EXYNOS_SWITCH el controlador S3C UDC difiere udc_enable()
+# al driver exynos-usb-switch, y si ese nunca detecta modo device el
+# gadget queda bound pero nunca enumera: el host no ve ningun dispositivo
+# USB y adb no aparece. Sin el switch, s3c_udc_start() llama a
+# udc_enable() directo (is_nonswitch() == true).
+# CONFIG_USB_EXYNOS_SWITCH is not set
 CONFIG_USB_PHY=y
 # CONFIG_USB_OTG_WAKELOCK is not set
 # CONFIG_NOP_USB_XCEIV is not set
