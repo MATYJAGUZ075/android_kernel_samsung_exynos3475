@@ -388,10 +388,34 @@ static void udc_disable(struct s3c_udc *dev)
 	if (dev->otg)
 		dev->otg->set_host(dev->otg, NULL);
 
-	printk(KERN_INFO "FIX021 udc_disable: shutdown PHY + clk off\n");
+	printk(KERN_INFO "FIX022 udc_disable: PHY off, clocks INTACTOS\n");
 	usb_phy_shutdown(dev->phy);
 
-	exynos_udc_clk_disable_unprepare(dev);
+	/*
+	 * FIX-022: NO apagar los clocks del UDC.
+	 *
+	 * En el Exynos 3475 estos clocks no son privados del USB:
+	 *   exynos_udc_clk_get() -> exynos3475_otg_clk_names[] =
+	 *     "otg_aclk", "otg_hclk", "upsizer_otg", "xiu_d_fsys1",
+	 *     "upsizer_fsys1", "upsizer_ahb_usbhs", "ahb_usbhs",
+	 *     "ahb2axi_usbhs"
+	 *
+	 * "upsizer_xiu" es el interconect (XIU) de Samsung y "xiu_d_fsys1" /
+	 * "upsizer_fsys1" son puertas del fabric hacia FSYS1. Apagarlas cuando se
+	 * desconecta el VBUS baja el interconect del SoC, no solo el USB: el
+	 * siguiente acceso a FSYS1 o al AHB de USB se queda colgado y el
+	 * sistema se cuelga (pantalla congelada, sin responder al boton de power,
+	 * hay que forzar el reset).
+	 *
+	 * Esto nunca se manifesto antes porque udc_enable() no corria nunca: el
+	 * driver imprimia "usb: Skip udc_enable", asi que los clocks nunca se
+	 * habilitaban y este clk_disable_unprepare no tenia efecto. Al arreglar
+	 * la enumeracion (FIX-020) se activo este codigo muerto y trajo el bug
+	 * consigo.
+	 *
+	 * Trade-off: el clock queda prendido mientras el USB este inactivo. Es
+	 * un coste de energia pequeno a cambio de no tumbar el interconect.
+	 */
 
 #if defined(CONFIG_FAKE_BATTERY_SAMSUNG)
 	s3c_udc_cable_disconnect(dev);
