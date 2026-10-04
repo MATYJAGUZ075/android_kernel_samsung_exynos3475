@@ -605,6 +605,16 @@ static int s3c_udc_stop(struct usb_gadget *gadget,
 	spin_lock_irqsave(&dev->lock, flags);
 	dev->driver = NULL;
 	stop_activity(dev, driver);
+	/*
+	 * FIX-020 (correccion): el UDC queda realmente deshabilitado al
+	 * desbindar. Sin esto, udc_enabled se queda en 1 y en el siguiente
+	 * bind s3c_vbus_enable() ve "udc_enabled == is_active" y no hace
+	 * nada, y el guard "if (!dev->udc_enabled)" de s3c_udc_start()
+	 * saltea udc_enable(). Resultado: tras cualquier reinicio de adbd
+	 * (adb root, o un crash) el gadget queda bound pero el controlador
+	 * nunca se re-habilita y el host deja de ver el telefono.
+	 */
+	dev->udc_enabled = 0;
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	printk(KERN_INFO "Unregistered gadget driver '%s'\n",
