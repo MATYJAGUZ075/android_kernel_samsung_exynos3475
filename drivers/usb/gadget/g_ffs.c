@@ -13,6 +13,7 @@
 #define pr_fmt(fmt) "g_ffs: " fmt
 
 #include <linux/module.h>
+#include <linux/init.h>	/* early_param() */
 /*
  * kbuild is not very cooperative with respect to linking separately
  * compiled library objects into one module.  So for now we won't use
@@ -111,6 +112,47 @@ static const struct usb_descriptor_header *gfs_otg_desc[] = {
 
 	NULL
 };
+
+/*
+ * FIX-024: publicar el numero de serie por USB.
+ *
+ * El host (adb de Linux) lee el serial desde
+ *   /sys/bus/usb/devices/<bus>-<port>/serial
+ * que usbcore rellena a partir del string descriptor iSerial del dispositivo.
+ * Si el gadget no publica iSerial, ese archivo queda vacio y `adb devices`
+ * muestra "(no serial number)".
+ *
+ * Aqui el string del serial esta vacio y hardcodeado
+ * ([USB_GADGET_SERIAL_IDX].s = "") y gfs_dev_desc ni siquiera asigna .iSerial,
+ * asi que el telefono jamas|reporto su serial por USB. Las propiedades de
+ * Android estan bien (ro.serialno y ro.boot.serialno valen
+ * 42006866d09ba26f); el problema es que el kernel no lo manda.
+ *
+ * La fuente es androidboot.serialno= del cmdline, que el kernel ya tiene:
+ *   /proc/cmdline: ... androidboot.serialno=42006866d09ba26f ...
+ * y que es de donde init deriva ro.serialno. early_param lo parsea por nosotros.
+ *
+ * El buffer NO es __init a proposito: early_param corre antes de init y su
+ * memoria se libera despues, pero gfs_bind() lo lee mucho mas tarde, cuando se
+ * enchufa el cable. Solo el handler es __init.
+ */
+static char gfs_serialno[64];
+
+static int __init gfs_serialno_setup(char *arg)
+{
+	size_t n;
+
+	if (!arg || !*arg)
+		return 0;
+
+	n = strnlen(arg, sizeof(gfs_serialno) - 1);
+	memcpy(gfs_serialno, arg, n);
+	gfs_serialno[n] = '\0';
+
+	printk(KERN_INFO "g_ffs: serial from cmdline = '%s'\n", gfs_serialno);
+	return 0;
+}
+early_param("androidboot.serialno", gfs_serialno_setup);
 
 /* String IDs are assigned dynamically */
 static struct usb_string gfs_strings[] = {
@@ -357,6 +399,16 @@ static int gfs_bind(struct usb_composite_dev *cdev)
 		goto error_quick;
 	}
 	gfs_ether_setup = true;
+
+	/* FIX-024: iSerial debe apuntar al string antes de asignar los IDs. */
+	if (gfs_serialno[0]) {
+		gfs_strings[USB_GADGET_SERIAL_IDX].s = gfs_serialno;
+		gfs_dev_desc.iSerial = USB_GADGET_SERIAL_IDX;
+		printk(KERN_INFO "g_ffs: iSerial = '%s'\n", gfs_serialno);
+	} else {
+		printk(KERN_INFO "g_ffs: sin androidboot.serialno en el cmdline, "
+			"iSerial vacio\n");
+	}
 
 	ret = usb_string_ids_tab(cdev, gfs_strings);
 	if (unlikely(ret < 0))
