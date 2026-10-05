@@ -293,8 +293,44 @@ static int functionfs_ready_callback(struct ffs_data *ffs)
 		goto done;
 	}
 
-	if (WARN_ON(ffs_obj->desc_ready)) {
-		ret = -EBUSY;
+	if (ffs_obj->desc_ready) {
+		/*
+		 * FIX-025: reentrada legitima de adbd, no un error de kernel.
+		 *
+		 * Medido en el J2 (LineageOS 20). adbd escribe los descriptores
+		 * DOS veces: la primera entra por aqui, pone desc_ready y hace
+		 * usb_composite_probe(); la segunda llega con desc_ready ya en true
+		 * y el WARN_ON de antes provocaba un oops. adbd reintentaba y el
+		 * ciclo se repetia una vez por segundo:
+		 *
+		 *   g_ffs: read descriptors
+		 *   g_ffs: read descriptors      <-- segunda escritura
+		 *   g_ffs: read strings
+		 *   WARNING: at g_ffs.c:254 ffs_ep0_write+0x7d8/0x8f0()
+		 *
+		 * y se repetia en 752, 753, 754... hasta que el sistema se iba.
+		 *
+		 * El cmdline trae "oops=panic" (lo inyecta el bootloader de Samsung,
+		 * no esta en el device tree, asi que no se puede quitar desde el
+		 * arbol) mas "sec_watchdog.sec_pet=5". Con oops=panic cualquier
+		 * WARN se convierte en caida del sistema, y el bucle de WARN_ON
+		 * seguido de dump_stack cada segundo es justo lo que hace que el
+		 * watchdog muerda.
+		 *
+		 * La reentrada es IDEMPOTENTE: el composite ya quedo registrado en
+		 * la llamada anterior y missing_funcs ya se decremento, asi que no
+		 * hay nada que rehacer. Se devuelve 0 con exito en vez de -EBUSY
+		 * para que adbd pueda seguir y levantar el gadget.
+		 *
+		 * Antes de este cambio se descarto que desc_ready no se reseteara:
+		 * functionfs_closed_callback() (mas abajo en este archivo) lo
+		 * vuelve a poner en false, y se dispara desde ffs_data_clear(),
+		 * que corre antes del ffs->flags = 0 de ffs_data_reset().
+		 * Tambien se descarto que no_disconnect=1 evitar ese reset: el
+		 * montaje es "mount functionfs adb /dev/usb-ffs/adb uid=2000,
+		 * gid=2000", sin no_disconnect.
+		 */
+		ret = 0;
 		goto done;
 	}
 	ffs_obj->desc_ready = true;
