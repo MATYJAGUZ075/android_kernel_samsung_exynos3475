@@ -403,7 +403,7 @@ static int gfs_bind(struct usb_composite_dev *cdev)
 	/* FIX-024: iSerial debe apuntar al string antes de asignar los IDs. */
 	if (gfs_serialno[0]) {
 		gfs_strings[USB_GADGET_SERIAL_IDX].s = gfs_serialno;
-		gfs_dev_desc.iSerial = USB_GADGET_SERIAL_IDX;
+		gfs_dev_desc.iSerialNumber = USB_GADGET_SERIAL_IDX;
 		printk(KERN_INFO "g_ffs: iSerial = '%s'\n", gfs_serialno);
 	} else {
 		printk(KERN_INFO "g_ffs: sin androidboot.serialno en el cmdline, "
