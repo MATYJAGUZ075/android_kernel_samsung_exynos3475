@@ -332,12 +332,28 @@ err:
  * CONFIG_USB_EXYNOS_SWITCH.
  *
  * Motivo, medido en el J2 (LineageOS 20): con el switch activo,
- * s3c_udc_start() imprimia "usb: Skip udc_enable" y delegaba la habilitacion
- * del UDC a exynos-usb-switch, que decide el modo con is_host_detect() /
- * is_device_detect(). En este device no llega a detectar modo device, asi que
- * udc_enable() no se llamaba nunca: el gadget quedaba bound ("bound driver
- * 'g_ffs'") pero el controlador nunca se activaba y el host no veía ningun
- * dispositivo USB. Por eso adb no aparecia nunca en `adb devices`.
+ * s3c_udc_start() imprimia "usb: Skip udc_enable" y NO llamaba a udc_enable().
+ * El gadget quedaba bound ("bound driver 'g_ffs'") pero el controlador nunca
+ * se activaba y el host no via ningun dispositivo USB, asi que adb no
+ * aparecia nunca en `adb devices`.
+ *
+ * CORRECCION (importante): antes se decia aqui que el switch "no llega a
+ * detectar modo device". Eso era FALSO, y tambien era la premisa de la que
+ * salio una tanda entera de parches al nucleo que rompieron el build y el
+ * arranque. La verdad, verificada con un grep sobre el arbol de device tree:
+ *
+ *   $ grep -rln usbswitch arch/arm/boot/dts/
+ *   arch/arm/boot/dts/exynos5422.dtsi
+ *   arch/arm/boot/dts/exynos5422_evt0.dtsi
+ *   arch/arm/boot/dts/exynos5430.dtsi
+ *   arch/arm/boot/dts/exynos5433.dtsi
+ *
+ * No hay nodo usbswitch en NINGUN dtsi de exynos3475, y
+ * exynos3475-j2_common.dtsi solo incluye exynos3475.dtsi. Por eso
+ * exynos_usbswitch_probe() NO SE EJECUTA JAMAS en este device: el driver
+ * compila pero no tiene platform_device al que ligarse. No es que falle la
+ * deteccion de modo, es que el switch nunca arranca. No hay por tanto
+ * conflicto alguno entre el switch y el UDC sobre el PHY.
  *
  * El log del telefono lo muestra claro:
  *   g_ffs gadget: g_ffs ready
@@ -508,6 +524,9 @@ int s3c_vbus_enable(struct usb_gadget *gadget, int is_active)
 				s3c_udc_soft_connect();
 		}
 	} else {
+		/* Log original del vendor, preservado (no reemplazar por la traza). */
+		printk(KERN_INFO "usb: %s, udc_enabled : %d, is_active : %d\n",
+				__func__, dev->udc_enabled, is_active);
 		printk(KERN_INFO "FIX021 vbus_session NO-OP: udc_enabled=%d is_active=%d pullup=%d\n",
 				dev->udc_enabled, is_active, pullup_state);
 	}
@@ -619,6 +638,9 @@ static int s3c_udc_stop(struct usb_gadget *gadget,
 	 * prendido y el IRQ ya habilitado (enable_irq desbalanceado), en vez
 	 * de apoyarse en el core que ya estaba armado desde el boot.
 	 */
+	/* Log original del vendor, preservado (no reemplazar por la traza). */
+	printk(KERN_INFO "Unregistered gadget driver '%s'\n",
+			driver->driver.name);
 	printk(KERN_INFO "FIX021 s3c_udc_stop: unbind '%s' udc_enabled=%d pullup=%d DCTL=%08x\n",
 			driver->driver.name, dev->udc_enabled, pullup_state,
 			__raw_readl(dev->regs + S3C_UDC_OTG_DCTL));
