@@ -26,6 +26,55 @@
 			alignment = <0x100000>;
 			id = <12>;
 		};
+
+		common {
+			compatible = "exynos5433-ion,common";
+			size = <0x600000>;
+			alignment = <0x100000>;
+			id = <0>;
+		};
+
+		mfc_sh {
+			compatible = "exynos5433-ion,mfc_sh";
+			size = <0x100000>;
+			alignment = <0x100000>;
+			id = <2>;
+		};
+
+		mfc_fw {
+			compatible = "exynos5433-ion,mfc_fw";
+			size = <0x100000>;
+			alignment = <0x100000>;
+			id = <8>;
+		};
+
+		sectbl {
+			compatible = "exynos5433-ion,sectbl";
+			size = <0x100000>;
+			alignment = <0x100000>;
+			id = <9>;
+		};
+
+		g2d_wfd {
+			compatible = "exynos5433-ion,g2d_wfd";
+			size = <0x800000>;
+			alignment = <0x100000>;
+			id = <10>;
+		};
+
+		video {
+			compatible = "exynos5433-ion,video";
+			size = <0x3000000>;
+			alignment = <0x100000>;
+			id = <11>;
+		};
+
+		secdma {
+			compatible = "exynos5433-ion,secdma";
+			size = <0x20000>;
+			alignment = <0x20000>;
+			id = <13>;
+		};
 	};
 
 	chosen {
