@@ -436,11 +436,16 @@ static int gfs_bind(struct usb_composite_dev *cdev)
 	}
 	gfs_ether_setup = true;
 
-	/* FIX-024: iSerial debe apuntar al string antes de asignar los IDs. */
+	/*
+	 * FIX-024: publicar el numero de serie por USB.
+	 *
+	 * Solo se rellena el string aqui. El descriptor se asigna despues de
+	 * usb_string_ids_tab(), igual que iProduct, y usando el id que ese
+	 * calloc asigna y no el indice de la tabla: iProduct ya lo hacia asi.
+	 */
 	if (gfs_serialno[0]) {
 		gfs_strings[USB_GADGET_SERIAL_IDX].s = gfs_serialno;
-		gfs_dev_desc.iSerialNumber = USB_GADGET_SERIAL_IDX;
-		printk(KERN_INFO "g_ffs: iSerial = '%s'\n", gfs_serialno);
+		printk(KERN_INFO "g_ffs: serial from cmdline = '%s'\n", gfs_serialno);
 	} else {
 		printk(KERN_INFO "g_ffs: sin androidboot.serialno en el cmdline, "
 			"iSerial vacio\n");
@@ -450,6 +455,8 @@ static int gfs_bind(struct usb_composite_dev *cdev)
 	if (unlikely(ret < 0))
 		goto error;
 	gfs_dev_desc.iProduct = gfs_strings[USB_GADGET_PRODUCT_IDX].id;
+	if (gfs_serialno[0])
+		gfs_dev_desc.iSerialNumber = gfs_strings[USB_GADGET_SERIAL_IDX].id;
 
 	for (i = func_num; i--; ) {
 		ret = functionfs_bind(ffs_tab[i].ffs_data, cdev);
