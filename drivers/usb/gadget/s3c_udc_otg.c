@@ -385,6 +385,7 @@ static void udc_disable(struct s3c_udc *dev)
 	u32 utemp;
 	DEBUG_SETUP("%s: %p\n", __func__, dev);
 
+	dev->udc_needs_reconfig = 1;
 	disable_irq(dev->irq);
 	udc_set_address(dev, 0);
 
@@ -471,6 +472,7 @@ static int udc_enable(struct s3c_udc *dev)
 	usb_phy_init(dev->phy);
 
 	reconfig_usbd();
+	dev->udc_needs_reconfig = 0;
 
 	DEBUG_SETUP("S3C USB 2.0 OTG Controller Core Initialized : 0x%x\n",
 			__raw_readl(dev->regs + S3C_UDC_OTG_GINTMSK));
@@ -600,6 +602,10 @@ static int s3c_udc_start(struct usb_gadget *gadget,
 				return err;
 			}
 			dev->udc_enabled = 1;
+		} else if (dev->udc_needs_reconfig) {
+			udc_reinit(dev);
+			reconfig_usbd();
+			dev->udc_needs_reconfig = 0;
 		}
 		pullup_state = 1;
 		s3c_udc_soft_connect();

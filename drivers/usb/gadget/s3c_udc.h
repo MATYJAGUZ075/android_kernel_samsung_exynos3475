@@ -166,6 +166,7 @@ struct s3c_udc {
 	unsigned int gpio_device_detect;
 	unsigned req_pending:1, req_std:1, req_config:1;
 	int udc_enabled;
+	int udc_needs_reconfig;
 };
 
 extern struct s3c_udc *the_controller;
