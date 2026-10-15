@@ -165,7 +165,13 @@ struct HciLayer::impl {
   template <typename TResponse>
   void handle_command_response(EventView event, std::string logging_id) {
     TResponse response_view = TResponse::Create(event);
-    ASSERT(response_view.IsValid());
+    if (!response_view.IsValid()) {
+      // El firmware legacy del BCM43438 manda eventos HCI malformados que
+      // TResponse::Create no puede parsear. ASSERT abortaba el proceso y dejaba
+      // el telefono sin bluetooth. Se degrada a warning que no interrumpe.
+      LOG_EVERY_N(WARNING, 100) << "Invalid " << logging_id << " event, discarding";
+      return;
+    }
     command_credits_ = response_view.GetNumHciCommandPackets();
     OpCode op_code = response_view.GetCommandOpCode();
     if (op_code == OpCode::NONE) {

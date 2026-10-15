@@ -1,0 +1,21 @@
+--- a/system/gd/hci/hci_layer.cc
++++ b/system/gd/hci/hci_layer.cc
+@@ -180,9 +180,16 @@
+     ASSERT_LOG(!command_queue_.empty(), "Unexpected %s event with OpCode 0x%02hx (%s)", logging_id.c_str(), op_code,
+                OpCodeText(op_code).c_str());
+     if (waiting_command_ == OpCode::CONTROLLER_DEBUG_INFO && op_code != OpCode::CONTROLLER_DEBUG_INFO) {
+       LOG_ERROR("Discarding event that came after timeout 0x%02hx (%s)", op_code, OpCodeText(op_code).c_str());
+       return;
+     }
+-    ASSERT_LOG(waiting_command_ == op_code, "Waiting for 0x%02hx (%s), got 0x%02hx (%s)", waiting_command_,
+-               OpCodeText(waiting_command_).c_str(), op_code, OpCodeText(op_code).c_str());
++    if (waiting_command_ != op_code) {
++      // El firmware legacy del BCM43438 manda eventos HCI con opcodes que el
++      // stack de A13 no espera (medido: "Waiting for 0xc03 (RESET), got
++      // 0xfc6d (Unknown OpCode: 64621)"). ASSERT_LOG abortaba el proceso y
++      // dejaba el telefono sin bluetooth. Se degrada a warning y se retorna
++      // sin invocar el callback con la respuesta basura.
++      LOG_EVERY_N(WARNING, 100) << "Waiting for " << OpCodeText(waiting_command_)
++                                << ", got " << OpCodeText(op_code);
++      return;
++    }
