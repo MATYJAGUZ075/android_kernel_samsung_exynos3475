@@ -180,8 +180,8 @@ struct HciLayer::impl {
       LOG_ERROR("Discarding event that came after timeout 0x%02hx (%s)", op_code, OpCodeText(op_code).c_str());
       return;
     }
-    ASSERT_LOG(waiting_command_ == op_code, "Waiting for 0x%02hx (%s), got 0x%02hx (%s)", waiting_command_,
-               OpCodeText(waiting_command_).c_str(), op_code, OpCodeText(op_code).c_str());
+    LOG_EVERY_N(WARNING, 100) << "Waiting for " << OpCodeText(waiting_command_)
+                                 << ", got " << OpCodeText(op_code);
 
     bool is_vendor_specific = static_cast<int>(op_code) & (0x3f << 10);
     CommandStatusView status_view = CommandStatusView::Create(event);
