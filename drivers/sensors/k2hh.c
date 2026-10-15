@@ -1371,6 +1371,15 @@ static int k2hh_probe(struct i2c_client *client,
 		goto exit_of_node;
 	}
 
+	/* data->odr queda en 0 por kzalloc y k2hh_set_mode() lo escribe tal cual
+	 * en CTRL1. Con ODR=000 el K2HH entra en power-down y no produce datos
+	 * nunca, aunque el input este enabled y el hrtimer corra. Se fija un ODR
+	 * valido (100 Hz) para que el arranque deje el sensor midiendo; si el HAL
+	 * escribe poll_delay despues, k2hh_set_odr() lo ajusta.
+	 * Medido en el telefono: CTRL1=0x87 (bits ODR=000) y los registros de ejes
+	 * 0x28-0x2D devuelven todo 0x00, con WHOAMI 0x0F respondiendo 0x41. */
+	data->odr = ACC_ODR100;
+
 	ret = k2hh_regulator_onoff(data, true);
 	if (ret < 0) {
 		SENSOR_ERR(" No regulator\n");
