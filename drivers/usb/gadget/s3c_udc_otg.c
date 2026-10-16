@@ -405,10 +405,32 @@ static void udc_disable(struct s3c_udc *dev)
 	if (dev->otg)
 		dev->otg->set_host(dev->otg, NULL);
 
-	printk(KERN_INFO "FIX021 udc_disable: shutdown PHY + clk off\n");
+	/*
+	 * FIX-026: do not tear the clocks down on VBUS disconnect.
+	 *
+	 * They are not private to the UDC. exynos3475_otg_clk_names[] resolves
+	 * "upsizer_otg", "xiu_d_fsys1", "upsizer_fsys1", "upsizer_ahb_usbhs",
+	 * "ahb_usbhs" and "ahb2axi_usbhs" on top of the private otg_aclk and
+	 * otg_hclk. The upsizer gates are the Samsung interconnect and the
+	 * xiu_d/upsizer_fsys1 gates lead into FSYS1, so dropping them does not
+	 * take USB down -- it takes the SoC interconnect down. The next access
+	 * to FSYS1 or to the USB AHB then wedges and the system stops.
+	 *
+	 * Measured on the device: with the clocks going down on unplug, the
+	 * phone froze within ~14s of the cable coming out and then restarted on
+	 * its own. The PWR key GPIO (gpa1-4, active_low, no pull) reads the
+	 * rail collapse as a stuck keypress, PowerManagerService then asks for
+	 * a reboot, and what looks like a random reboot is the interconnect
+	 * fault surfacing. With the clocks left in place the cable session just
+	 * ends.
+	 *
+	 * Cost: the OTG clocks stay on from the first session until unbind. That
+	 * is the deliberate trade -- a few idle clocks rather than taking the
+	 * interconnect down. udc_enable() still enables them per session and
+	 * s3c_udc_remove() releases them, so the refcount is balanced at teardown.
+	 */
+	printk(KERN_INFO "FIX026 udc_disable: PHY off, clocks intactos\n");
 	usb_phy_shutdown(dev->phy);
-
-	exynos_udc_clk_disable_unprepare(dev);
 
 #if defined(CONFIG_FAKE_BATTERY_SAMSUNG)
 	s3c_udc_cable_disconnect(dev);
