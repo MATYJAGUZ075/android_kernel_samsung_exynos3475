@@ -1447,7 +1447,42 @@ static int k2hh_probe(struct i2c_client *client,
 	data->hr = CTRL1_HR_ENABLE;
 
 	k2hh_set_range(data, K2HH_RANGE_4G);
-	k2hh_set_mode(data, K2HH_MODE_SUSPEND);
+	k2hh_set_bw(data);
+	/*
+	 * El probe no puede dejar el chip en power-down. K2HH_MODE_SUSPEND
+	 * escribe ACC_PM_OFF (0x00) en los bits de ODR de CTRL1, y eso deja al
+	 * K2HH midiendo siempre en cero hasta que alguien vuelva a ponerlo en
+	 * K2HH_MODE_NORMAL.
+	 *
+	 * En este dispositivo ese "alguien" es el HAL de sensores de Samsung, a
+	 * traves del atributo "enable" del input device. Measured on device:
+	 *
+	 *   /sys/class/input/input3/enable        -> 0
+	 *   i2cget -y -f 7 0x1D 0x20  (CTRL1)      -> 0x07   (ODR=000, power-down)
+	 *   i2cget 0x1D 0x28..0x2D (ejes)          -> sin dato de gravedad
+	 *   dumpsys sensorservice
+	 *     Recent Sensor events:  (vacio)
+	 *     0 active connections
+	 *   dumpsys window
+	 *     WindowOrientationListener
+	 *       mEnabled=true
+	 *       mSensor={Sensor name="K2HH Acceleration ", type=1, ...}
+	 *       AccelSensorJudge
+	 *         mLastFilteredTimestampNanos=-9223372036854775808   (nunca hubo evento)
+	 *
+	 * El framework si pide el acelerometro (mEnabled=true y el sensor
+	 * resuelto), pero el chip esta apagado y por eso el judge del framework
+	 * no recibe ni un evento: la rotacion automatica no llega a funcionar.
+	 *
+	 * Se deja el sensor midiendo desde el probe y se arranca el hrtimer, de
+	 * forma que el input device produce datos aunque el HAL no llegue a
+	 * habilitarlo. atomic enable sigue en OFF a proposito: asi una escritura
+	 * de "enable"=0 del HAL es un no-op (su rama de disable solo actua si
+	 * pre_enable==ON) y no vuelve a apagar el chip, mientras que una
+	 * escritura de "enable"=1 hace el camino completo de siempre.
+	 */
+	k2hh_set_mode(data, K2HH_MODE_NORMAL);
+	k2hh_set_enable(data, ON);
 
 	SENSOR_INFO("Probe done!\n");
 
