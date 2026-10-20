@@ -186,6 +186,5 @@
 	};
 	fimc_is@14400000 {
 		front_sensor_id = <302>;
-		rear_sensor_id = <303>;
 	};
 };
