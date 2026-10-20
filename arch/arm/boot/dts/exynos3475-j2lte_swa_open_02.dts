@@ -175,4 +175,7 @@
 			cm36672p,default_trim = <0>;
 		};
 	};
+	fimc_is@14400000 {
+		front_sensor_id = <302>;
+	};
 };
