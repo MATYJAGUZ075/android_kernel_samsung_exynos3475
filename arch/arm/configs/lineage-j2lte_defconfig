@@ -2911,7 +2911,47 @@ CONFIG_USB_U_SERIAL=y
 # CONFIG_USB_G_NCM is not set
 # CONFIG_USB_GADGETFS is not set
 # fix_usb_functionfs toggle
-CONFIG_USB_FUNCTIONFS=y
+#
+# FIX-042: CONFIG_USB_FUNCTIONFS se desactiva. CONFIG_USB_FUNCTIONFS compila
+# g_ffs.o, que es un driver de UDC (gadget) competitor del g_android.o de
+# Samsung (CONFIG_USB_G_ANDROID + CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE).
+#
+# Los dos compiten por el UDC 13580000.usb y sólo uno puede engancharse. En este
+# device gana g_ffs, y entonces NO existe /sys/class/android_usb/, que es la
+# unica interfaz por la que se puede cambiar la funcion USB. Medido:
+#
+#   $ ls /sys/class/android_usb/
+#   No such file or directory
+#   $ ls /sys/class/udc/13580000.usb/device/gadget/
+#   power
+#   uevent            (vacio: ni functions, ni enable, ni idVendor)
+#   $ getprop | grep sys.usb
+#   [sys.usb.config]: [adb]
+#   [sys.usb.state]: [adb]
+#
+# O sea que el init.universal3475.usb.rc del ramdisk, que tiene los handlers
+# de mtp, mtp,adb, ptp, ptp,adb, rndis, rndis,adb, mass_storage, ... escribiendo
+# en /sys/class/android_usb/android0/, falla en todas sus escrituras: el
+# dispositivo queda como ADB puro y no hay forma de exponer MTP o PTP.
+#
+# Con g_android enganchado al UDC aparece /sys/class/android_usb/android0/ con
+# todas las funciones de Samsung (adb, f_ffs, mtp, rndis, mass_storage,
+# accessory, ...) y el init rc del device tree las puede activar.
+#
+# El ADB sigue funcionando: android.c incluye f_fs.c y f_adb.c, y el init rc
+# hace exactamente lo que espera de ese camino:
+#
+#   mount functionfs adb /dev/usb-ffs/adb uid=2000,gid=2000
+#   write /sys/class/android_usb/android0/f_ffs/aliases adb
+#
+# El path del A13 configfs (/config/usb_gadget/g1) no aplica a este kernel:
+# CONFIG_USB_CONFIGFS no esta y el driver UDC es el s3c-hsotg de Samsung, que
+# trabaja con la interfaz android_usb clasica.
+#
+# ROLLBACK: si tras el rebuild el ADB por USB no apareciera, se restores esto
+# (CONFIG_USB_FUNCTIONFS=y) y se vuelve a flashear boot.img. El acceso por
+# WiFi/TCP no depende del USB.
+# CONFIG_USB_FUNCTIONFS is not set
 # CONFIG_USB_MASS_STORAGE is not set
 # CONFIG_USB_G_SERIAL is not set
 # CONFIG_USB_MIDI_GADGET is not set
