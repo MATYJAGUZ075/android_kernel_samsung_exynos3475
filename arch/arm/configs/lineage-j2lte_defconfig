@@ -2958,7 +2958,16 @@ CONFIG_USB_U_SERIAL=y
 # CONFIG_USB_G_PRINTER is not set
 CONFIG_USB_G_ANDROID=y
 CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE=y
-# CONFIG_USB_ANDROID_SAMSUNG_MTP is not set
+# MTP de Samsung: expone /dev/usb_mtp_gadget, que es lo que habla con el
+# daemon /vendor/bin/mtpd (que ya viene en el vendor) por el socket
+# /dev/socket/mtp. El init del device tree ya deja los permisos de ambos:
+#   chmod 0660 /dev/usb_mtp_gadget
+#   chown system mtp /dev/usb_mtp_gadget
+#   mkdir /dev/socket/mtp 0770 system mtp
+#
+# Sin esto el g_android no expone la funcion mtp y no hay forma de poner el
+# telefono en "Transferencia de archivos".
+CONFIG_USB_ANDROID_SAMSUNG_MTP=y
 # CONFIG_USB_LOCK_SUPPORT_FOR_MDM is not set
 CONFIG_USB_DUN_SUPPORT=y
 CONFIG_USB_NCM_SUPPORT_MTU_CHANGE=y
@@ -3279,7 +3288,20 @@ CONFIG_STAGING=y
 # Triggers - standalone
 #
 # CONFIG_IIO_SIMPLE_DUMMY is not set
-# CONFIG_ZRAM is not set
+# ZRAM: swap comprimido en RAM.
+#
+# Con 814 MB de RAM utiles el swap en particion (vnswap0) es lo unico que
+# hay, y llega a 328 MB usados: I/O y desgaste de flash. Con zram el swap
+# vive en RAM comprimida (LZ4), que es mucho mas rapido y no toca el flash.
+#
+# El driver esta en drivers/staging/zram (version de este kernel) y depende
+# de ZSMALLOC, que tambien hay que activar.
+#
+# El tamano y la activacion los hace el init del device tree
+# (Optimizations/zram.rc): 256 MB de zram con prioridad alta, dejando el swap
+# en particion como respaldo.
+CONFIG_ZSMALLOC=y
+CONFIG_ZRAM=y
 # CONFIG_BCM_WIMAX is not set
 # CONFIG_FT1000 is not set
 
