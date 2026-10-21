@@ -64,7 +64,16 @@
 
 		video {
 			compatible = "exynos5433-ion,video";
-			size = <0x3000000>;
+			/*
+			 * 48 MB -> 16 MB. Esta region solo la pide el codice de
+			 * video por hardware con las flags heredadas
+			 * (FIMD_VIDEO/MFC_OUTPUT/MFC_INPUT), que en A12+ ya no
+			 * usa nadie del kernel. 16 MB da de sobra para 1080p
+			 * (3,1 MB por frame NV12, con 4 buffers) y libera 32 MB
+			 * de RAM, que en este equipo de 813 MB es un 4 %.
+			 * Si algun dia hiciese falta 4K, se puede subir.
+			 */
+			size = <0x1000000>;
 			alignment = <0x100000>;
 			id = <11>;
 		};
@@ -534,7 +543,7 @@
 		contig = <0 0x600000 0x0>,
 		         <2 0x100000 0x0>,
 		         <10 0x800000 0x0>,
-		         <11 0x3000000 0x0>,
+		         <11 0x1000000 0x0>,
 		         <9 0x100000 0x0>,
 		         <8 0x100000 0x0>,
 		         <12 0x100000 0x0>,
