@@ -43,7 +43,17 @@
 					compatible = "android,system";
 					dev = "/dev/block/platform/13540000.dwmmc0/by-name/SYSTEM";
 					type = "ext4";
-					mnt_flags = "ro,noatime,errors=panic,noload,block_validity";
+					// Sin "block_validity": el parche propietario de Samsung que
+					// valida un checksum por bloque esta en una version mas vieja en
+					// este kernel y devolvia lecturas corruptas de inodos concretos
+					// (ext4_lookup: deleted inode referenced), corrompiendo el
+					// metadata del sistema. Sin el flag, el parche no se usa.
+					//
+					// Se mantiene "noload" a proposito: este fstab lo consume el
+					// bootloader (no el kernel) para montar la raiz, y anadir
+					// opciones nuevas (data=ordered, errors=remount-ro) hacia que
+					// el montaje fallase y el movil quedara en bucle de arranque.
+					mnt_flags = "ro,noatime,errors=panic,noload";
 					fsmgr_flags = "wait";
 					status = "ok";
 				};
