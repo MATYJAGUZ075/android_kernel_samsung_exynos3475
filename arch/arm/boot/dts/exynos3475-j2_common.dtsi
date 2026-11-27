@@ -981,7 +981,7 @@
 
 	fimc_is@14400000 {
 		rear_sensor_id = <57>;
-		front_sensor_id = <303>;
+		front_sensor_id = <302>;
 		use_module_check;
 		skip_cal_loading;
 
